@@ -95,6 +95,7 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
   auto n_progs = params.population_size;
   auto tour_size = params.tournament_size;
   auto n_tours = n_progs; // at least num_progs tournaments
+  std::vector<char> skip(n_progs, 0);
 
   // Seed engines
   PhiloxEngine h_gen(seed); // use Philox instead of Mersenne Twister?
@@ -149,6 +150,9 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
     // RAFT_CUDA_TRY(cudaPeekAtLastError());
     // h.sync_stream(stream);
 
+    for (int i = 0; i < n_progs; ++i)
+      skip[i] = (h_nextprogs[i].mut_type == mutation_t::reproduce);
+
     // Perform host mutations
 
     auto donor_pos = n_progs;
@@ -177,10 +181,9 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
       }
     }
   }
-
   // Update raw fitness for all programs
   set_batched_fitness(n_progs, h_nextprogs, params, n_samples, data, y,
-                      sample_weights);
+                      sample_weights, skip.data());
 }
 
 float param::p_reproduce() const {

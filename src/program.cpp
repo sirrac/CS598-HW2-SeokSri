@@ -20,9 +20,10 @@ namespace genetic {
  */
 template <int MaxSize = MAX_STACK_SIZE>
 void execute_kernel(const program_t d_progs, const float *data, float *y_pred,
-                    const uint64_t n_rows, const uint64_t n_progs) {
+                    const uint64_t n_rows, const uint64_t n_progs, char *skips = nullptr) {
   #pragma omp parallel for schedule(dynamic)
   for (uint64_t pid = 0; pid < n_progs; ++pid) {
+    if (skips && skips[pid]) continue;
     for (uint64_t row_id = 0; row_id < n_rows; ++row_id) {
 
       stack<float, MaxSize> eval_stack;
@@ -103,9 +104,9 @@ void compute_metric(int n_rows, int n_progs, const float *y,
 }
 
 void execute(const program_t &d_progs, const int n_rows, const int n_progs,
-             const float *data, float *y_pred) {
+             const float *data, float *y_pred, char *skips) {
   execute_kernel(d_progs, data, y_pred, static_cast<uint64_t>(n_rows),
-                 static_cast<uint64_t>(n_progs));
+                 static_cast<uint64_t>(n_progs), skips);
 }
 
 void find_fitness(program_t d_prog, float *score, const param &params,
@@ -123,14 +124,14 @@ void find_fitness(program_t d_prog, float *score, const param &params,
 void find_batched_fitness(int n_progs, program_t d_progs, float *score,
                           const param &params, const int n_rows,
                           const float *data, const float *y,
-                          const float *sample_weights) {
+                          const float *sample_weights, char *skips) {
 
   static thread_local std::vector<float> y_pred;
-  
+
   const size_t n = (size_t)n_rows * (size_t)n_progs;
   if (y_pred.size() < n) y_pred.resize(n);
 
-  execute(d_progs, n_rows, n_progs, data, y_pred.data());
+  execute(d_progs, n_rows, n_progs, data, y_pred.data(), skips);
 
   // Compute error
   compute_metric(n_rows, n_progs, y, y_pred.data(), sample_weights, score,
@@ -152,16 +153,17 @@ void set_fitness(program &h_prog, const param &params, const int n_rows,
 void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
                          const param &params, const int n_rows,
                          const float *data, const float *y,
-                         const float *sample_weights) {
+                         const float *sample_weights, char *skips) {
 
   std::vector<float> score(n_progs);
 
   find_batched_fitness(n_progs, h_progs.data(), score.data(), params, n_rows,
-                       data, y, sample_weights);
+                       data, y, sample_weights, skips);
 
   // Update scores on host and device
   // TODO: Find a way to reduce the number of implicit memory transfers
   for (auto i = 0; i < n_progs; ++i) {
+    if (skips && skips[i]) continue;  // reproduced: raw_fitness_ already copied from parent
     h_progs[i].raw_fitness_ = score[i];
   }
 }
