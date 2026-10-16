@@ -17,39 +17,65 @@ namespace genetic {
 /**
  * Execution kernel for a single program. We assume that the input data
  * is stored in column major format.
+ *
+ * Programs are evaluated node by node, each node over all rows at once, so
+ * the operation is chosen once per node instead of once per row.
  */
 template <int MaxSize = MAX_STACK_SIZE>
 void execute_kernel(const program_t d_progs, const float *data, float *y_pred,
                     const uint64_t n_rows, const uint64_t n_progs, char *skips = nullptr) {
-  #pragma omp parallel for schedule(dynamic)
-  for (uint64_t pid = 0; pid < n_progs; ++pid) {
-    if (skips && skips[pid]) continue;
-    for (uint64_t row_id = 0; row_id < n_rows; ++row_id) {
+  #pragma omp parallel
+  {
+    // Per-thread stack of columns (one value per row), reused for every program.
+    static thread_local std::vector<float> eval_stack, discard, zeros;
+    if (eval_stack.size() < static_cast<size_t>(MaxSize) * n_rows)
+      eval_stack.resize(static_cast<size_t>(MaxSize) * n_rows);
+    if (discard.size() < n_rows) discard.resize(n_rows);
+    if (zeros.size() < n_rows) zeros.resize(n_rows, 0.0f); 
 
-      stack<float, MaxSize> eval_stack;
+    #pragma omp for schedule(dynamic)
+    for (uint64_t pid = 0; pid < n_progs; ++pid) {
+      if (skips && skips[pid]) continue;
+
+      // Same edge cases as stack<>: pop on an empty stack yields zeros, and
+      // push on a full stack is dropped. The result is computed directly into
+      // the slot it is pushed to (next()), so push() only has to claim it.
+      int depth = 0;
+      auto pop = [&]() -> const float * {
+        return depth > 0 ? &eval_stack[--depth * n_rows] : zeros.data();
+      };
+      auto next = [&]() -> float * {
+        return depth < MaxSize ? &eval_stack[depth * n_rows] : discard.data();
+      };
+      auto push = [&]() {
+        if (depth < MaxSize)
+          ++depth;
+      };
+
       program_t curr_p = d_progs + pid; // Current program
 
       int end = curr_p->len - 1;
       node *curr_node = curr_p->nodes + end;
 
-      float res = 0.0f;
-      float in[2] = {0.0f, 0.0f};
+      const float *in[2] = {zeros.data(), zeros.data()};
 
       while (end >= 0) {
         if (detail::is_nonterminal(curr_node->t)) {
           int ar = detail::arity(curr_node->t);
-          in[0] = eval_stack.pop(); // Min arity of function is 1
+          in[0] = pop(); // Min arity of function is 1
           if (ar > 1)
-            in[1] = eval_stack.pop();
+            in[1] = pop();
         }
-        res = detail::evaluate_node(*curr_node, data, n_rows, row_id, in);
-        eval_stack.push(res);
+        float *res = next();
+        detail::evaluate_node_column(*curr_node, data, n_rows, in, res);
+        push();
         curr_node--;
         end--;
       }
 
       // Outputs stored in col-major format
-      y_pred[pid * n_rows + row_id] = eval_stack.pop();
+      const float *top = pop();
+      std::copy(top, top + n_rows, y_pred + pid * n_rows);
     }
   }
 }
