@@ -2,6 +2,7 @@ CXX := g++
 CXXFLAGS := -std=c++17 -Wall -Wextra -I include -I. 
 
 CXXFLAGS += -g -fno-omit-frame-pointer -O3
+CXXFLAGS += -fopenmp
 
 # Directories
 SRC_DIR := src
