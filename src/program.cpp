@@ -41,15 +41,16 @@ void execute_kernel(const program_t d_progs, const float *data, float *y_pred,
       // push on a full stack is dropped. The result is computed directly into
       // the slot it is pushed to (next()), so push() only has to claim it.
       int depth = 0;
+      const float *stack_ptr[MaxSize];
       auto pop = [&]() -> const float * {
-        return depth > 0 ? &eval_stack[--depth * n_rows] : zeros.data();
+        return depth > 0 ? stack_ptr[--depth] : zeros.data();
       };
       auto next = [&]() -> float * {
         return depth < MaxSize ? &eval_stack[depth * n_rows] : discard.data();
       };
-      auto push = [&]() {
+      auto push = [&](const float *col) {
         if (depth < MaxSize)
-          ++depth;
+          stack_ptr[depth++] = col;
       };
 
       program_t curr_p = d_progs + pid; // Current program
@@ -60,6 +61,12 @@ void execute_kernel(const program_t d_progs, const float *data, float *y_pred,
       const float *in[2] = {zeros.data(), zeros.data()};
 
       while (end >= 0) {
+        if (curr_node->t == node::type::variable) {
+          push(data + n_rows * curr_node->u.fid);
+          curr_node--;
+          end--;
+          continue;
+        }
         if (detail::is_nonterminal(curr_node->t)) {
           int ar = detail::arity(curr_node->t);
           in[0] = pop(); // Min arity of function is 1
@@ -68,7 +75,7 @@ void execute_kernel(const program_t d_progs, const float *data, float *y_pred,
         }
         float *res = next();
         detail::evaluate_node_column(*curr_node, data, n_rows, in, res);
-        push();
+        push(res);
         curr_node--;
         end--;
       }
