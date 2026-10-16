@@ -49,6 +49,9 @@ struct program {
    */
   program &operator=(const program &src);
 
+  program(program &&src) noexcept;
+  program &operator=(program &&src) noexcept;
+
   node *nodes;
   /** total number of nodes in this AST */
   int len;

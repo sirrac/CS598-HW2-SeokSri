@@ -205,6 +205,27 @@ void insertionSortPrograms(genetic::program *programs, int size) {
   }
 }
 
+void stableSortPrograms(genetic::program *programs, int size) {
+  // set any nan values to +inf
+  for (int i = 0; i < size; ++i) {
+    if (std::isnan(programs[i].raw_fitness_)) {
+      programs[i].raw_fitness_ = std::numeric_limits<float>::max();
+    }
+  }
+
+  // do stable sort, then permute once instead of O(n^2) deep program copies
+  std::vector<int> idx(size);
+  std::iota(idx.begin(), idx.end(), 0);
+  std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) {
+    return programs[a].raw_fitness_ < programs[b].raw_fitness_;
+  });
+
+  std::vector<genetic::program> sorted;
+  sorted.reserve(size);
+  for (int i : idx) sorted.push_back(std::move(programs[i]));
+  for (int i = 0; i < size; ++i) programs[i] = std::move(sorted[i]);
+}
+
 void run_symbolic_regression(const std::string &dataset_file) {
   std::cout << "\n;;===== Symbolic Regression Benchmark =====\n" << std::endl;
   std::cout << "(provide best-program-1 best-program-2)\n";
@@ -295,7 +316,7 @@ void run_symbolic_regression(const std::string &dataset_file) {
   // }
 
   // Predict on top 2 candidates
-  insertionSortPrograms(final_programs, params.population_size);
+  stableSortPrograms(final_programs, params.population_size);
 
   std::vector<float> y_pred1(X_test.size());
   genetic::symRegPredict(X_test_flat.data(), X_test.size(), &final_programs[0],
@@ -440,7 +461,7 @@ void run_symbolic_classification(const std::string &dataset_file) {
   // }
 
   // Predict classes for best 2 programs acc to training
-  insertionSortPrograms(final_programs, params.population_size);
+  stableSortPrograms(final_programs, params.population_size);
   std::vector<float> y_pred1(X_test.size());
   genetic::symClfPredict(X_test_flat.data(), X_test.size(), params,
                          &final_programs[0], y_pred1.data());
@@ -595,7 +616,7 @@ void run_symbolic_reconstruction(const std::string &png_file, int K) {
       genetic::symFit(X_train_flat.data(), y_train.data(),
                       sample_weights.data(), X_train.size(),
                       params.num_features, params, final_programs, history);
-      insertionSortPrograms(final_programs, params.population_size);
+      stableSortPrograms(final_programs, params.population_size);
       genetic::program_t best_program = &final_programs[0];
 
       std::vector<float> predictions(X_test.size());
