@@ -125,7 +125,11 @@ void find_batched_fitness(int n_progs, program_t d_progs, float *score,
                           const float *data, const float *y,
                           const float *sample_weights) {
 
-  std::vector<float> y_pred((uint64_t)n_rows * (uint64_t)n_progs);
+  static thread_local std::vector<float> y_pred;
+  
+  const size_t n = (size_t)n_rows * (size_t)n_progs;
+  if (y_pred.size() < n) y_pred.resize(n);
+
   execute(d_progs, n_rows, n_progs, data, y_pred.data());
 
   // Compute error
