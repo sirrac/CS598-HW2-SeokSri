@@ -16,7 +16,7 @@
 #   -b BENCHES     space-separated benchmark names       default: all five
 #   -c COMMITS     space-separated commits, in order     default: optimization history
 #   -R REF_COMMIT  commit whose output is the reference  default: feebc15 (baseline)
-#   -o OUT_DIR     where results are written             default: bench_results/<timestamp>
+#   -o OUT_DIR     where results are written             default: bench_results
 #   -p             also collect hardware counters: one extra run per
 #                  (commit, benchmark) under `perf stat`, separate from the
 #                  timed runs. Skipped with a warning if perf is unavailable.
@@ -25,16 +25,13 @@
 # The reference commit always runs first, so every other commit's output can be
 # checked against it.
 #
-# Results (bench_results/latest points to the most recent sweep):
+# Results (each run replaces times.csv and perf.csv in OUT_DIR):
 #   OUT_DIR/times.csv             commit,label,benchmark,run,seconds,matches_ref
 #   OUT_DIR/perf.csv              (with -p) commit,label,benchmark,seconds,cycles,
 #                                 instructions,branches,branch_misses,ipc,
 #                                 branch_miss_pct  (counts summed over all threads)
 #   OUT_DIR/outputs/<commit>/     first-run output of each benchmark
 #   OUT_DIR/machine.txt           CPU, core count, compiler, date
-#
-# Passing an existing -o OUT_DIR appends to its times.csv, so a sweep can be
-# split across invocations and still be checked against the saved reference.
 #
 # Note: the -O0 baseline is slow (README reference: silk-wave ~226 s,
 # square-wave ~714 s per run), and a full sweep takes about an hour. Run it
@@ -47,7 +44,7 @@ BASE_RUNS=1
 BENCHES="diabetes cancer housing silk-wave square-wave"
 COMMITS=""
 REF=feebc15
-OUT_DIR=""
+OUT_DIR=bench_results
 PERF=0
 PERF_EVENTS="cycles,instructions,branches,branch-misses"
 
@@ -82,11 +79,6 @@ done
 
 REPO=$(git rev-parse --show-toplevel)
 cd "$REPO"
-if [[ -z "$OUT_DIR" ]]; then
-  OUT_DIR="bench_results/$(date +%Y%m%d-%H%M%S)"
-  mkdir -p bench_results
-  ln -sfn "$(basename "$OUT_DIR")" bench_results/latest
-fi
 mkdir -p "$OUT_DIR/outputs"
 OUT_DIR=$(cd "$OUT_DIR" && pwd)
 CSV="$OUT_DIR/times.csv"
@@ -127,7 +119,8 @@ ENTRIES=("${ORDERED[@]}")
   echo "OMP_NUM_THREADS: ${OMP_NUM_THREADS:-unset (all cores)}"
 } > "$OUT_DIR/machine.txt"
 
-[[ -f "$CSV" ]] || echo "commit,label,benchmark,run,seconds,matches_ref" > "$CSV"
+echo "commit,label,benchmark,run,seconds,matches_ref" > "$CSV"
+rm -f "$OUT_DIR/perf.csv"
 
 # Sums one event from `perf stat -x,` output. Handles PMU-prefixed names
 # (e.g. cpu_core/cycles/ on hybrid CPUs) and skips <not counted> values.
@@ -144,7 +137,7 @@ if [[ $PERF -eq 1 ]]; then
   if command -v perf >/dev/null 2>&1 &&
      perf stat -x, -e cycles -o "$probe" true >/dev/null 2>&1 &&
      [[ -n "$(perf_event cycles "$probe")" ]]; then
-    [[ -f "$PCSV" ]] || echo "commit,label,benchmark,seconds,cycles,instructions,branches,branch_misses,ipc,branch_miss_pct" > "$PCSV"
+    echo "commit,label,benchmark,seconds,cycles,instructions,branches,branch_misses,ipc,branch_miss_pct" > "$PCSV"
   else
     echo "warning: perf stat is unavailable or cannot read hardware counters;" \
          "skipping -p (timed runs are unaffected)" >&2

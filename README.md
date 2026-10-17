@@ -4,11 +4,18 @@ This repository contains code for homework 2 of 598APE.
 
 In particular, this repository is an implementation of Symbolic Regression and the various contexts it can be used in.
 
+Starting from the course baseline, we applied 10 optimizations (compiler
+optimization, an O(1) evaluation stack, OpenMP parallelism, removal of
+serial overhead, and a column-wise interpreter) that leave every benchmark's
+output identical to the baseline while running the five benchmarks
+69-181x faster than the `-O0` baseline and 17-36x faster than `-O3` alone,
+on the 4-core course VM. See
+[Reproducing Benchmark and Verifying the Optimizations](#reproducing-benchmark-and-verifying-the-optimizations).
+
 To compile the program run:
 ```bash
 make -j
 ```
-# just testing a thing
 
 To clean existing build artifacts run:
 ```bash
@@ -124,6 +131,92 @@ and are able to reconstruct
 with the source code for the reconstructed wave in [square-wave-ref.rkt](./benchmark/square-wave-ref.rkt)
 
 The time taken for the end to end run can be seen in the last comment of the generated rkt file. Similar to HW1, your goal is to reduce this runtime as much as possible, while maintining/increasing complexity. For the image code, it is sufficient to just optimize image generation, however, you are also free to optimize image drawing too (which is currently implemnented as a DSL in Racket)
+
+## Reproducing Benchmark and Verifying the Optimizations
+
+### Performance (the numbers in the report)
+
+`scripts/bench_commits.sh` reproduces every timing in the report. For each
+optimization commit it builds a clean copy in a temporary git worktree, runs all five benchmarks, and records the
+end-to-end time that `genetic_benchmark` prints.
+
+```bash
+scripts/bench_commits.sh 2>&1 | tee bench.log     # full sweep, ~1 h on 4 cores
+scripts/bench_commits.sh -r 1 -b "diabetes cancer housing"   # quick check, no images
+scripts/bench_commits.sh -h                       # all options
+```
+
+By default the `-O0` baseline runs once and every other commit 3
+times. Results go to `bench_results/` (each run replaces the previous
+results there; use `-o DIR` to write somewhere else):
+
+- `times.csv`: `commit, label, benchmark, run, seconds, matches_ref`
+- `machine.txt`: CPU, core count, compiler
+- `outputs/<commit>/`: each commit's benchmark output
+
+**Hardware counters.** With `-p`, the script adds one separate `perf stat` run
+per commit and benchmark (cycles, instructions, branches, branch misses) and
+writes `perf.csv`. The counter table in the report used the command below,
+which writes to its own folder so it does not replace the timing results:
+
+```bash
+sudo sysctl kernel.perf_event_paranoid=1     # allow perf to count (resets on reboot)
+scripts/bench_commits.sh -p -r 1 -b "cancer square-wave" -R a4d0b6d \
+  -c "a4d0b6d 0a0c6d1 de6b4e1 c6b6a9d cbba732 86dc1ab ae2edf6 2ab2945 5df15a0 4c03341" \
+  -o bench_results/counters
+```
+
+**Report tables and figures.** `scripts/make_report_assets.py` turns
+`times.csv` and `perf.csv` into the numbers and plot data used by the report:
+
+```bash
+python3 scripts/make_report_assets.py bench_results/times.csv bench_results/counters/perf.csv report
+```
+
+### Correctness (identical output)
+
+`bench_commits.sh` compares each run's full output (every evolved program and
+its fitness; only the timing line is ignored) against the baseline
+(`feebc15`) and records the result in the `matches_ref` column. Every run of
+every commit must say `yes`:
+
+```bash
+grep -c ',NO$' bench_results/times.csv     # prints 0
+```
+
+All 10 shipped commits produce output identical to the baseline on all five
+benchmarks.
+
+## Optimizations and How to Evaluate Individually
+
+Each optimization is a single commit on top of the baseline. To measure one in
+isolation, time the commit against its parent:
+
+```bash
+scripts/bench_commits.sh -c "<commit>~1 <commit>" -R <commit>~1
+```
+
+or by hand:
+
+```bash
+git checkout <commit>~1 && make clean && make -j    # just before it
+git checkout <commit>   && make clean && make -j    # with it
+./genetic_benchmark <dataset>                        # e.g. cancer, silk-wave
+```
+
+| # | Commit | Kind | Optimization |
+|---|---|---|---|
+| 0 | `feebc15` | | Baseline (`-O0`, single-threaded) |
+| 1 | `a4d0b6d` | compiler | Build at `-O3` instead of `-O0` |
+| 2 | `0a0c6d1` | data structure | Evaluation stack: O(1) `push`/`pop` instead of scanning all 20 slots |
+| 3 | `de6b4e1` | parallelism | OpenMP `parallel for` over programs in `execute_kernel` |
+| 4 | `c6b6a9d` | memory management | Reuse a per-thread prediction buffer instead of allocating it every generation |
+| 5 | `cbba732` | work reduction | Skip re-evaluating reproduced programs (their fitness is copied from the parent) |
+| 6 | `86dc1ab` | algorithmic | Stable index sort instead of insertion sort with deep copies; move operations for `program` |
+| 7 | `ae2edf6` | parallelism | Parallelize `logLoss` over programs |
+| 8 | `2ab2945` | parallelism, work reduction | Parallelize `meanSquareError` and fuse its two passes |
+| 9 | `5df15a0` | algorithmic | Column-wise interpreter: evaluate node by node over all rows (`evaluate_node_column`) |
+| 10 | `4c03341` | copy reduction | Push variable columns onto the stack by pointer instead of copying |
 
 ## Input Datasets and Images
 This project contains 3 input datasets and 2 images for you to optimize. All 3 are standard scikit-learn datasets. The images are generated bitmaps from `benchmark/generate-easy-image.rkt`.
